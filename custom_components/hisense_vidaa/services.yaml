@@ -4,9 +4,6 @@ show_message:
     Briefly display a message on the TV by hijacking the input picker
     (rename current input → flash picker → restore name). DISRUPTIVE — interrupts
     whatever is on-screen for the duration. Best for doorbell/alarm-grade events.
-  target:
-    device:
-      integration: hisense_vidaa
   fields:
     message:
       name: Message
@@ -26,3 +23,9 @@ show_message:
           max: 15
           step: 1
           mode: slider
+    device_id:
+      name: Device
+      description: Which Hisense VIDAA TV to send the message to. Omit to fire on all configured TVs.
+      selector:
+        device:
+          integration: hisense_vidaa
