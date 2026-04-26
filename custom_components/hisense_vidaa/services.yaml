@@ -1,0 +1,28 @@
+show_message:
+  name: Show message on TV
+  description: >-
+    Briefly display a message on the TV by hijacking the input picker
+    (rename current input → flash picker → restore name). DISRUPTIVE — interrupts
+    whatever is on-screen for the duration. Best for doorbell/alarm-grade events.
+  target:
+    device:
+      integration: hisense_vidaa
+  fields:
+    message:
+      name: Message
+      description: Text to show. Capped at ~25 characters; longer is truncated.
+      required: true
+      example: "Doorbell ringing"
+      selector:
+        text:
+    seconds:
+      name: Duration
+      description: How long the picker stays visible (plus ~1s of dismissal).
+      default: 3
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 15
+          step: 1
+          mode: slider

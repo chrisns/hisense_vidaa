@@ -1,0 +1,20 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hisense VIDAA TV (CDP)",
+        "description": "Connects to the unauthenticated Chrome DevTools Protocol the TV exposes on port 9223. The TV must be powered on for setup to succeed.",
+        "data": {
+          "host": "Host or IP",
+          "port": "CDP port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the TV's CDP endpoint. Check the host, and that the TV is powered on."
+    },
+    "abort": {
+      "already_configured": "This TV is already configured."
+    }
+  }
+}
