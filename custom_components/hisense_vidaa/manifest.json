@@ -1,7 +1,9 @@
 {
   "domain": "hisense_vidaa",
   "name": "Hisense VIDAA TV (CDP)",
-  "codeowners": ["@chrisns"],
+  "codeowners": [
+    "@chrisns"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/chrisns/hisense_vidaa",
@@ -9,5 +11,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/chrisns/hisense_vidaa/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

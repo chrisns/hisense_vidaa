@@ -44,11 +44,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         port=entry.data.get(CONF_PORT, DEFAULT_PORT),
         session=session,
     )
-    coordinator = HisenseVidaaCoordinator(hass, client)
+    coordinator = HisenseVidaaCoordinator(hass, client, entry)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # React to options changes (scan_interval, etc.) without a full reload
+    entry.async_on_unload(entry.add_update_listener(_async_update_options))
 
     if not hass.services.has_service(DOMAIN, SERVICE_SHOW_MESSAGE):
         async def _show_message(call: ServiceCall) -> None:
@@ -70,6 +73,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     return True
+
+
+async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    coordinator: HisenseVidaaCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is not None:
+        coordinator.reload_intervals()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

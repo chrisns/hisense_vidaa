@@ -16,5 +16,17 @@
     "abort": {
       "already_configured": "This TV is already configured."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Polling interval",
+        "description": "How often to poll the TV via CDP. The TV must be powered on; when it's off, the integration backs off to the offline interval until it comes back.",
+        "data": {
+          "scan_interval": "Online poll interval (seconds)",
+          "offline_interval": "Offline back-off interval (seconds)"
+        }
+      }
+    }
   }
 }
