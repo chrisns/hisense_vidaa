@@ -45,7 +45,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         session=session,
     )
     coordinator = HisenseVidaaCoordinator(hass, client, entry)
-    await coordinator.async_config_entry_first_refresh()
+    # Don't block setup on the TV being reachable. If it's off at HA startup a
+    # blocking first-refresh would raise ConfigEntryNotReady and abort setup —
+    # entities would never be created, needing a manual reload once the TV's on.
+    # Instead do a non-raising refresh: entities come up (unavailable until the
+    # first success) and the coordinator's adaptive polling reconnects in the
+    # background, snapping to the fast cadence the moment the TV comes online.
+    await coordinator.async_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
