@@ -90,7 +90,13 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+        coordinator: HisenseVidaaCoordinator | None = hass.data[DOMAIN].pop(
+            entry.entry_id, None
+        )
+        # Close the held CDP socket. The TV allows one debugger client per page,
+        # so a stranded session blocks the next setup until it is power cycled.
+        if coordinator is not None:
+            await coordinator.client.async_close()
     if not hass.data.get(DOMAIN):
         # Last entry unloaded — remove the service so it doesn't dangle
         hass.services.async_remove(DOMAIN, SERVICE_SHOW_MESSAGE)
