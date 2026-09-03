@@ -1,9 +1,15 @@
 """Async client for the Chrome DevTools Protocol exposed by Hisense VIDAA TVs.
 
 The TV runs the VIDAA UI as a Chromium WebView with port 9223 open, no auth.
-Page UUID changes on UI restart, so we always rediscover via /json before
-each WebSocket call. Calls are deliberately one-shot; the WebSocket isn't
-held open between polls because the TV's CDP server can be flaky.
+That WebView is Chromium 48, which accepts only ONE WebSocket debugger client
+per page. We therefore hold a single connection open and reuse it for every
+call, rather than opening one per poll: a connect/close cycle every few seconds
+eventually leaves a session attached, and the next upgrade is then refused with
+"500 Invalid response status" until the TV is power cycled at the mains.
+
+The page UUID changes on UI restart, so discovery via /json runs on every
+(re)connect, not on every call. Any failure drops the socket and the next call
+reconnects.
 """
 from __future__ import annotations
 
@@ -15,6 +21,17 @@ from typing import Any
 import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
+
+# Bound every network phase explicitly. aiohttp's ClientWSTimeout only covers
+# the close handshake, so connect and receive are wrapped in wait_for instead.
+DISCOVERY_TIMEOUT = 5.0
+CONNECT_TIMEOUT = 10.0
+# No WebSocket heartbeat. This Chromium build never answers a ping, so aiohttp
+# tears down a perfectly healthy socket about 83 s into any idle period, which
+# is the connect/close churn this client exists to avoid. Measured against the
+# TV: with heartbeat=55 the connection closed between t+80 s and t+90 s every
+# time. The poll traffic is the liveness check instead, and a socket the TV has
+# dropped surfaces on the next call and is reconnected transparently.
 
 NAME_ALIASES = {
     "tv": ["tv"],
@@ -40,6 +57,8 @@ class HisenseCDP:
         self._port = port
         self._session = session
         self._msg_id = 0
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._lock = asyncio.Lock()
 
     @property
     def host(self) -> str:
@@ -79,22 +98,95 @@ class HisenseCDP:
             return candidates[0]["webSocketDebuggerUrl"]
         raise HisenseCDPError("no debuggable page in /json")
 
-    async def _ws_call(self, method: str, params: dict, timeout: float = 10.0) -> dict:
-        """Single-shot CDP call: open WS → send command → read one reply."""
-        self._msg_id += 1
-        msg_id = self._msg_id
+    async def _ensure_ws(self) -> aiohttp.ClientWebSocketResponse:
+        """Return the live connection, opening one if we do not have it."""
+        if self._ws is not None and not self._ws.closed:
+            return self._ws
+        self._ws = None
         ws_url = await self._ws_url()
         try:
-            async with self._session.ws_connect(
-                ws_url, timeout=aiohttp.ClientWSTimeout(ws_close=timeout)
-            ) as ws:
-                await ws.send_json({"id": msg_id, "method": method, "params": params})
-                msg = await asyncio.wait_for(ws.receive(), timeout=timeout)
+            self._ws = await asyncio.wait_for(
+                self._session.ws_connect(ws_url),
+                timeout=CONNECT_TIMEOUT,
+            )
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            raise HisenseCDPError(f"CDP {method} failed: {err}") from err
-        if msg.type != aiohttp.WSMsgType.TEXT:
-            raise HisenseCDPError(f"unexpected ws msg type: {msg.type}")
-        return json.loads(msg.data)
+            self._ws = None
+            raise HisenseCDPError(f"connect failed: {err}") from err
+        _LOGGER.debug("CDP websocket opened to %s", ws_url)
+        return self._ws
+
+    async def _drop_ws(self) -> None:
+        """Close and forget the connection so the next call reconnects.
+
+        Always closes explicitly: leaving it to garbage collection is what
+        strands a debugger session on the TV.
+        """
+        ws, self._ws = self._ws, None
+        if ws is None or ws.closed:
+            return
+        try:
+            await ws.close()
+        except Exception:  # noqa: BLE001 - closing must never mask the real error
+            _LOGGER.debug("ignoring error while closing CDP websocket", exc_info=True)
+
+    async def async_close(self) -> None:
+        """Release the connection. Called when the config entry unloads."""
+        async with self._lock:
+            await self._drop_ws()
+
+    async def _read_reply(
+        self, ws: aiohttp.ClientWebSocketResponse, msg_id: int, timeout: float
+    ) -> dict:
+        """Read until the reply carrying our id arrives, ignoring CDP events."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise HisenseCDPError(f"timed out waiting for reply to id={msg_id}")
+            msg = await asyncio.wait_for(ws.receive(), timeout=remaining)
+            if msg.type is aiohttp.WSMsgType.TEXT:
+                data = json.loads(msg.data)
+                if data.get("id") == msg_id:
+                    return data
+                continue  # an unsolicited event, or a reply we already gave up on
+            if msg.type is aiohttp.WSMsgType.ERROR:
+                raise HisenseCDPError(f"websocket error: {ws.exception()}")
+            if msg.type in (
+                aiohttp.WSMsgType.CLOSE,
+                aiohttp.WSMsgType.CLOSING,
+                aiohttp.WSMsgType.CLOSED,
+            ):
+                raise HisenseCDPError("websocket closed by the TV")
+
+    async def _ws_call(self, method: str, params: dict, timeout: float = 10.0) -> dict:
+        """Send one CDP command on the held connection and return its reply.
+
+        One call at a time, because replies are matched by id on a shared
+        socket. A failed attempt drops the connection and is retried once, so a
+        socket the TV closed while idle does not surface as an error.
+        """
+        async with self._lock:
+            last: Exception | None = None
+            for attempt in (1, 2):
+                try:
+                    ws = await self._ensure_ws()
+                    self._msg_id += 1
+                    msg_id = self._msg_id
+                    await ws.send_json(
+                        {"id": msg_id, "method": method, "params": params}
+                    )
+                    return await self._read_reply(ws, msg_id, timeout)
+                except (
+                    aiohttp.ClientError,
+                    asyncio.TimeoutError,
+                    HisenseCDPError,
+                ) as err:
+                    last = err
+                    await self._drop_ws()
+                    if attempt == 1:
+                        _LOGGER.debug("CDP %s failed, reconnecting: %s", method, err)
+            raise HisenseCDPError(f"CDP {method} failed: {last}") from last
 
     async def evaluate(self, expression: str, timeout: float = 10.0) -> Any:
         data = await self._ws_call(
