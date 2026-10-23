@@ -63,7 +63,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def _show_message(call: ServiceCall) -> None:
             message: str = call.data["message"]
             seconds: float = call.data.get("seconds", 3)
-            target_entry_ids = await async_extract_config_entry_ids(hass, call)
+            target_entry_ids = await async_extract_config_entry_ids(call)
             entries = (
                 [hass.data[DOMAIN][eid] for eid in target_entry_ids if eid in hass.data.get(DOMAIN, {})]
                 or list(hass.data.get(DOMAIN, {}).values())
