@@ -349,7 +349,7 @@ class HisenseCDP:
         await self.evaluate(f"model.sound.setHeadphoneInsertTvMute({1 if on else 0})")
 
     async def set_power(self, on: bool) -> None:
-        await self.evaluate(f"model.system.setOn({1 if on else 0})")
+        await self.evaluate("model.system.setOn(1)" if on else "model.system.SwitchOffTv()")
 
     async def cec_rediscover(self) -> None:
         await self.evaluate("model.cec.setHdmiDevicesSearch(1)")
